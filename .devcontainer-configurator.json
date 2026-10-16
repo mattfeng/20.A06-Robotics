@@ -1,0 +1,18 @@
+{
+  "version": 5,
+  "host_ports": [],
+  "masked_paths": [
+    ".jj",
+    ".git"
+  ],
+  "masked_scan_paths": [],
+  "read_only_paths": [
+    ".devcontainer"
+  ],
+  "read_only_scan_paths": [],
+  "reference_paths": [],
+  "gpu": {
+    "mode": "none",
+    "device": ""
+  }
+}
