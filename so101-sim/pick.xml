@@ -1,0 +1,26 @@
+<mujoco model="SO-ARM101 block pick and place">
+  <include file="mujoco_menagerie/robotstudio_so101/so101.xml"/>
+  <compiler meshdir="mujoco_menagerie/robotstudio_so101/assets"/>
+  <option timestep="0.005" cone="elliptic" iterations="50"/>
+  <statistic center="0.18 0 0.07" extent="0.25"/>
+  <visual>
+    <global offwidth="256" offheight="256" azimuth="135" elevation="-25"/>
+    <headlight ambient="0.5 0.5 0.5" diffuse="0.6 0.6 0.6"/>
+  </visual>
+  <worldbody>
+    <light pos="0.2 0 1" dir="0 0 -1" directional="true"/>
+    <camera name="overhead" pos="0.22 0 0.7" quat="1 0 0 0" fovy="42"/>
+    <geom name="floor" type="plane" size="0.6 0.6 0.01" rgba="0.22 0.24 0.27 1"/>
+    <body name="block" pos="0.23 -0.04 0.015">
+      <freejoint name="block_joint"/>
+      <geom name="block_geom" type="box" size="0.015 0.015 0.015" mass="0.025" rgba="0.9 0.04 0.03 1" friction="1 0.005 0.0001" condim="6"/>
+    </body>
+    <body name="target" mocap="true" pos="0.23 0.07 0.0005">
+      <geom name="target_geom" type="box" size="0.028 0.028 0.0005" rgba="0.02 0.03 0.9 1" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+  <sensor>
+    <framepos name="block_position" objtype="body" objname="block"/>
+    <framepos name="target_position" objtype="body" objname="target"/>
+  </sensor>
+</mujoco>

@@ -1,0 +1,2 @@
+ERROR Fri Oct 16 15:27:29 2026: could not create window
+
