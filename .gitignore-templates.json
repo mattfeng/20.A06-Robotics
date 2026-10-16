@@ -1,0 +1,9 @@
+{
+  "source": "https://github.com/github/gitignore",
+  "branch": "main",
+  "templates": [
+    "Global/Linux.gitignore",
+    "Global/macOS.gitignore",
+    "Python.gitignore"
+  ]
+}

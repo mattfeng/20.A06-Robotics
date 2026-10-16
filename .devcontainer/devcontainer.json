@@ -58,7 +58,6 @@
   "mounts": [
     "source=claude-code-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
     "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
-    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
     "source=codex-config-${devcontainerId},target=/home/node/.codex,type=volume",
     "source=pi-config-${devcontainerId},target=/home/node/.pi,type=volume",
     "source=oh-my-pi-config-${devcontainerId},target=/home/node/.omp,type=volume",

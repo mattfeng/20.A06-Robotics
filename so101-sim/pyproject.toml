@@ -1,0 +1,19 @@
+[project]
+name = "so101-sim"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mujoco-mjx",
+    "mujoco-mjx[warp]; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "jax[cuda13]; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[tool.uv]
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
