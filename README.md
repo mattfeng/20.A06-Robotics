@@ -42,29 +42,57 @@ MUJOCO_GL=egl uv run python pick.py eval --mode camera --episodes 20 --seed 1000
 ### Save evaluations and replay them
 
 ```bash
-# Saving is optional; one compressed NPZ per episode, including failures.
+# Saving is optional; each command creates a randomly named run subdirectory.
 uv run python pick.py eval --mode sensors --episodes 20 --save-dir runs/eval
 MUJOCO_GL=egl uv run python pick.py eval --mode camera --episodes 20 --save-dir runs/eval
 
-# Replay the actual recorded motion, not a fresh policy rollout.
-uv run python pick.py replay --recording runs/eval/camera-10000-0000.npz
+# Use the run directory printed by evaluation (brave_otter is an example).
+uv run python pick.py replay --recording runs/eval/brave_otter/camera-10000-0000.npz
 ```
 
 Open **http://127.0.0.1:8080**. Pause, single-step, speed controls, and Reset work
-in mjviser. Playback holds the final frame; Reset returns to the initial frame.
-Use `--port` / `--host` as with live viewing.
+in mjviser and keep the recorded RGB image synchronized with the 3D state.
+Playback holds both the final pose and image; Reset returns both to the initial
+frame. Use `--port` / `--host` as with live viewing.
 
 Recordings contain the initial state and every physics step, including joint and
 block poses, velocities, actuator controls, simulation time, and the randomized
-destination pose, plus the timestep and evaluation result. They do not contain
-camera video, checkpoints, or robot meshes. Replay uses the repository's scene
-and assets with the same MuJoCo version; it requires neither trained weights nor
-offscreen OpenGL, even for camera-policy recordings.
+destination pose, plus the timestep and evaluation result. Camera-policy recordings
+include a 256×256 uint8 RGB image for **every saved state**, stored as `rgb_frames`
+with shape `(number_of_states, 256, 256, 3)`. This includes the initial and final
+frames: 2,501 images for a default 12.5-second episode at a 5 ms timestep.
 
-Files are named `<mode>-<seed>-<episode:04d>.npz`. Repeating the same evaluation
-in the same directory overwrites matching filenames. Without `--save-dir`, no
-trajectory buffers or recording files are created. `--report` remains an
-independent JSON metrics export.
+mjviser displays the stream under **Recorded camera RGB**, selecting the image
+at the same recorded index as the 3D scene. The browser refresh rate may skip
+intermediate images at normal speed; slow playback or single-step to inspect
+individual saved frames. This is a recording feature, not a policy change:
+the policy still acts on its initial image only. Sensor recordings do not capture RGB.
+
+Capturing every frame substantially increases recording time and storage.
+One default episode contains about 469 MiB of uncompressed image data; NPZ
+compresses it on disk. Evaluation and replay hold one episode's frames in memory.
+
+The recording format is now version 2. Re-run evaluation to replace older
+state-only/initial-image version-1 recordings; those cannot provide a complete
+RGB stream and are rejected by the new loader. Recordings contain neither
+checkpoints nor robot meshes. Replay uses the repository's scene and assets with
+the same MuJoCo version and needs neither trained weights nor offscreen OpenGL.
+
+Each saved evaluation run gets a random Docker-style adjective–noun directory,
+such as `runs/eval/brave_otter/`. All episodes from that invocation go inside it,
+named `<mode>-<seed>-<episode:04d>.npz`. The run name is printed at startup, stored
+as `run_name` in each recording's metadata, and its path appears as `run_dir` in
+the evaluation summary and JSON report.
+
+Names are independent of the evaluation seed: repeating a seeded evaluation
+preserves its simulated trajectories but creates a new directory. Existing names
+are skipped atomically, so previous runs are not overwritten. There are 1,024
+adjective–noun combinations per save directory; if all are occupied, choose a
+different `--save-dir`.
+
+Without `--save-dir`, no run directory, trajectory buffers, or recording files
+are created. `--report` remains an independent JSON metrics export at the path
+you specify.
 
 ### Measured checkpoint results
 

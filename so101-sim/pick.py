@@ -1,6 +1,7 @@
 """CPU imitation learning for SO-ARM101. See ../README.md for scope and commands."""
 import argparse
 import json
+import random
 from pathlib import Path
 
 import mujoco
@@ -78,6 +79,10 @@ class Simulation:
                          self.data.sensor("target_position").data[:2]]
         if self.renderer is None:
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
+        # mj_step integrates qpos after computing transforms. Render the new pose,
+        # without running dynamics again or changing the solver's warm start.
+        mujoco.mj_kinematics(self.model, self.data)
+        mujoco.mj_camlight(self.model, self.data)
         self.renderer.update_scene(self.data, camera="overhead")
         return self.renderer.render()
 
@@ -124,12 +129,15 @@ class Simulation:
                 "held_seconds": self.max_held_steps * self.model.opt.timestep,
                 "settled_seconds": self.settled_steps * self.model.opt.timestep}
 
-    def rollout(self, plan, home, states=None):
+    def rollout(self, plan, home, states=None, rgb_frames=None):
         while True:
             if states is not None:
                 mujoco.mj_getState(self.model, self.data, states[self.step_count],
                                    mujoco.mjtState.mjSTATE_INTEGRATION)
-            if self.step(plan, home):
+            done = self.step(plan, home)
+            if rgb_frames is not None:
+                rgb_frames[self.step_count] = self.observe("camera")
+            if done:
                 break
         if states is not None:
             mujoco.mj_getState(self.model, self.data, states[self.step_count],
@@ -205,31 +213,68 @@ def train(sim, args):
                           "joint_rmse_rad": float(np.sqrt(np.mean((design @ weights - actions)**2)))}))
 
 
+def create_run_dir(root):
+    """Atomically reserve an unused adjective_noun name, independent of the task seed."""
+    adjectives = (
+        "agile amber bold brave bright brisk calm clever coral cosmic curious daring "
+        "eager gentle golden happy jolly keen kind lively lucky mellow merry nimble "
+        "patient quiet rapid silver steady sunny swift wise"
+    ).split()
+    nouns = (
+        "badger bear beaver bison crane dolphin eagle falcon finch fox gecko heron "
+        "ibis jaguar kestrel koala lemur lynx marmot moose otter owl panda penguin "
+        "puffin raven robin seal sparrow tiger turtle wren"
+    ).split()
+    names = [f"{adjective}_{noun}" for adjective in adjectives for noun in nouns]
+    random.SystemRandom().shuffle(names)
+    root.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        path = root / name
+        try:
+            path.mkdir()
+        except FileExistsError:
+            continue
+        return path
+    raise FileExistsError(f"All {len(names)} run names are occupied in {root}; choose another --save-dir")
+
+
 def evaluate(sim, policy, args):
     rng = np.random.default_rng(args.seed)
     results = []
     states = None
+    rgb_frames = None
+    run_dir = None
     if args.save_dir is not None:
-        args.save_dir.mkdir(parents=True, exist_ok=True)
+        run_dir = create_run_dir(args.save_dir)
+        print(f"Run: {run_dir.name} ({run_dir})", flush=True)
         frames = round(DURATIONS.sum() / sim.model.opt.timestep) + 1
         width = mujoco.mj_stateSize(sim.model, mujoco.mjtState.mjSTATE_INTEGRATION)
         states = np.empty((frames, width))
+        if policy.mode == "camera":
+            rgb_frames = np.empty((frames, 256, 256, 3), dtype=np.uint8)
     for i in range(args.episodes):
         sim.reset(rng.uniform(LOW, HIGH), policy.home)
-        plan = policy.plan(sim.observe(policy.mode))
-        result = sim.rollout(plan, policy.home, states)
+        observation = sim.observe(policy.mode)
+        plan = policy.plan(observation)
+        if rgb_frames is not None:
+            rgb_frames[0] = observation
+        result = sim.rollout(plan, policy.home, states, rgb_frames)
         if states is not None:
-            path = args.save_dir / f"{policy.mode}-{args.seed}-{i:04d}.npz"
-            metadata = {"mode": policy.mode, "seed": args.seed, "episode": i, **result}
-            np.savez_compressed(path, version=1, states=states,
+            path = run_dir / f"{policy.mode}-{args.seed}-{i:04d}.npz"
+            metadata = {"run_name": run_dir.name, "mode": policy.mode,
+                        "seed": args.seed, "episode": i, **result}
+            images = {"rgb_frames": rgb_frames} if rgb_frames is not None else {}
+            np.savez_compressed(path, version=2, states=states,
                                 timestep=sim.model.opt.timestep,
-                                metadata=json.dumps(metadata))
+                                metadata=json.dumps(metadata), **images)
             print(f"Recording: {path}", flush=True)
         results.append(result)
         print(json.dumps({"episode": i, **result}), flush=True)
     summary = {"mode": policy.mode, "seed": args.seed, "episodes": len(results),
                "successes": sum(r["success"] for r in results),
                "mean_placement_error_m": float(np.mean([r["placement_error_m"] for r in results]))}
+    if run_dir is not None:
+        summary["run_dir"] = str(run_dir)
     print(json.dumps(summary), flush=True)
     if args.report:
         args.report.write_text(json.dumps({"summary": summary, "episodes": results}, indent=2) + "\n")
@@ -274,16 +319,23 @@ class Replay:
     """Restore recorded integration states; never advance physics or a policy."""
     def __init__(self, model, path):
         with np.load(path, allow_pickle=False) as recording:
-            if int(recording["version"]) != 1:
-                raise ValueError("Unsupported recording version")
+            if int(recording["version"]) != 2:
+                raise ValueError("Unsupported recording version; re-run evaluation to save full RGB playback")
             self.states = recording["states"]
             timestep = float(recording["timestep"])
             self.metadata = json.loads(str(recording["metadata"]))
+            self.rgb_frames = recording.get("rgb_frames")
         width = mujoco.mj_stateSize(model, mujoco.mjtState.mjSTATE_INTEGRATION)
         if (self.states.ndim != 2 or self.states.shape[0] < 2
                 or self.states.shape[1] != width or not np.isfinite(self.states).all()
                 or not np.isfinite(timestep) or timestep <= 0):
             raise ValueError("Invalid recording or incompatible MuJoCo model")
+        if self.metadata["mode"] == "camera" and self.rgb_frames is None:
+            raise ValueError("Camera recording is missing RGB frames")
+        if self.rgb_frames is not None and (
+                self.rgb_frames.shape != (len(self.states), 256, 256, 3)
+                or self.rgb_frames.dtype != np.uint8):
+            raise ValueError("Recorded RGB frames must match the simulation states")
         model.opt.timestep = timestep
         self.index = 0
 
@@ -315,7 +367,19 @@ def replay(sim, args):
         f"{'success' if meta['success'] else 'failed'}.\n\n"
         "Recorded states, not re-simulated. Holds the final frame; Reset to replay."
     )
-    viewer = Viewer(sim.model, sim.data, step_fn=recording.step,
+    camera_display = None
+    if recording.rgb_frames is not None:
+        camera_display = server.gui.add_image(recording.rgb_frames[0], label="Recorded camera RGB")
+    displayed_index = 0
+
+    def render(scene):
+        nonlocal displayed_index
+        scene.update_from_mjdata(sim.data)
+        if camera_display is not None and displayed_index != recording.index:
+            camera_display.image = recording.rgb_frames[recording.index]
+            displayed_index = recording.index
+
+    viewer = Viewer(sim.model, sim.data, step_fn=recording.step, render_fn=render,
                     reset_fn=recording.reset, server=server)
     viewer.scene.camera_tracking_enabled = False
     viewer.run()
